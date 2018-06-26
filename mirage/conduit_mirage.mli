@@ -58,31 +58,17 @@ val stackv4: (module Mirage_types_lwt.STACKV4 with type t = 'a) -> 'a stackv4
 
 (** {1 VCHAN} *)
 
-type vchan_client = [
-  | `Vchan of [
-      | `Direct of int * Vchan.Port.t                   (** domain id, port *)
-      | `Domain_socket of string * Vchan.Port.t (** Vchan Xen domain socket *)
-    ]]
-
-type vchan_server = [
-  | `Vchan of [
-      | `Direct of int * Vchan.Port.t                   (** domain id, port *)
-      | `Domain_socket                          (** Vchan Xen domain socket *)
-    ]]
-
-module type VCHAN = Vchan.S.ENDPOINT with type port = Vchan.Port.t
-module type XS = Xs_client_lwt.S
+type vchan_client = [ `Vchan of int ] [@@deriving sexp]
+type vchan_server = [ `Vchan of int ] [@@deriving sexp]
 
 type vchan
 type xs
 
-val vchan: (module VCHAN) -> vchan
-val xs: (module XS) -> xs
 
 (** {1 TLS} *)
 
-type 'a tls_client = [ `TLS of Tls.Config.client * 'a ]
-type 'a tls_server = [ `TLS of Tls.Config.server * 'a ]
+type 'a tls_client = [ `TLS of 'a ]
+type 'a tls_server = [ `TLS of 'a ]
 
 type client = [ tcp_client | vchan_client | client tls_client ] [@@deriving sexp]
 (** The type for client configuration values. *)
