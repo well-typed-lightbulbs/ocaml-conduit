@@ -58,36 +58,25 @@ val stackv4: (module Mirage_types_lwt.STACKV4 with type t = 'a) -> 'a stackv4
 
 (** {1 VCHAN} *)
 
-type vchan_client = [
-  | `Vchan of [
-      | `Direct of int * Vchan.Port.t                   (** domain id, port *)
-      | `Domain_socket of string * Vchan.Port.t (** Vchan Xen domain socket *)
-    ]]
+type vchan_client = unit
 
-type vchan_server = [
-  | `Vchan of [
-      | `Direct of int * Vchan.Port.t                   (** domain id, port *)
-      | `Domain_socket                          (** Vchan Xen domain socket *)
-    ]]
-
-module type VCHAN = Vchan.S.ENDPOINT with type port = Vchan.Port.t
-module type XS = Xs_client_lwt.S
+type vchan_server = unit
 
 type vchan
 type xs
 
-val vchan: (module VCHAN) -> vchan
-val xs: (module XS) -> xs
+val vchan: unit -> vchan
+val xs: unit -> xs
 
 (** {1 TLS} *)
 
 type 'a tls_client = [ `TLS of Tls.Config.client * 'a ]
 type 'a tls_server = [ `TLS of Tls.Config.server * 'a ]
 
-type client = [ tcp_client | vchan_client | client tls_client ] [@@deriving sexp]
+type client = [ tcp_client | client tls_client ] [@@deriving sexp]
 (** The type for client configuration values. *)
 
-type server = [ tcp_server | vchan_server | server tls_server ] [@@deriving sexp]
+type server = [ tcp_server | server tls_server ] [@@deriving sexp]
 (** The type for server configuration values. *)
 
 val client: Conduit.endp -> client Lwt.t
@@ -116,9 +105,6 @@ module type S = sig
 
   val with_tls: t -> t Lwt.t
   (** Extend a conduit with an implementation for TLS. *)
-
-  val with_vchan: t -> xs -> vchan -> string -> t Lwt.t
-  (** Extend a conduit with an implementation for VCHAN. *)
 
   val connect: t -> client -> Flow.flow Lwt.t
   (** Connect a conduit using a client configuration value. *)

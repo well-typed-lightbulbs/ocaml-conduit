@@ -74,25 +74,12 @@ type tcp_server = [ `TCP of int ] [@@deriving sexp]
 type 'a stackv4 = (module Mirage_types_lwt.STACKV4 with type t = 'a)
 let stackv4 x = x
 
-module type VCHAN = Vchan.S.ENDPOINT with type port = Vchan.Port.t
-module type XS = Xs_client_lwt.S
+type vchan_client = unit [@@deriving sexp]
 
-type vchan_client = [
-  | `Vchan of [
-      | `Direct of int * Vchan.Port.t                   (** domain id, port *)
-      | `Domain_socket of string * Vchan.Port.t (** Vchan Xen domain socket *)
-    ]
-] [@@deriving sexp]
+type vchan_server = unit [@@deriving sexp]
 
-type vchan_server = [
-  | `Vchan of [
-      | `Direct of int * Vchan.Port.t                   (** domain id, port *)
-      | `Domain_socket                          (** Vchan Xen domain socket *)
-    ]
-] [@@deriving sexp]
-
-type vchan = (module VCHAN)
-type xs = (module XS)
+type vchan = unit
+type xs = unit
 
 let vchan x = x
 let xs x = x
@@ -100,8 +87,8 @@ let xs x = x
 type 'a tls_client = [ `TLS of Tls.Config.client * 'a ] [@@deriving sexp]
 type 'a tls_server = [ `TLS of Tls.Config.server * 'a ] [@@deriving sexp]
 
-type client = [ tcp_client | vchan_client | client tls_client ] [@@deriving sexp]
-type server = [ tcp_server | vchan_server | server tls_server ] [@@deriving sexp]
+type client = [ tcp_client | client tls_client ] [@@deriving sexp]
+type server = [ tcp_server | server tls_server ] [@@deriving sexp]
 
 type tls_client' = client tls_client [@@deriving sexp]
 type tls_server' = server tls_server [@@deriving sexp]
@@ -127,11 +114,6 @@ let connect t (c:client) = match c with
       | None -> err_tcp_not_supported "connect"
       | Some (S ((module S), t)) -> S.connect t x
     end
-  | `Vchan _ as x ->
-    begin match t.vchan with
-      | None -> err_vchan_not_supported "connect"
-      | Some (S ((module S), t)) -> S.connect t x
-    end
   | `TLS _ as x ->
     begin match t.tls with
       | None -> err_tls_not_supported "connect"
@@ -142,11 +124,6 @@ let listen t (s:server) f = match s with
   | `TCP _ as x ->
     begin match t.tcp with
       | None -> err_tcp_not_supported "listen"
-      | Some (S ((module S), t)) -> S.listen t x f
-    end
-  | `Vchan _ as x ->
-    begin match t.vchan with
-      | None  -> err_vchan_not_supported "listen";
       | Some (S ((module S), t)) -> S.listen t x f
     end
   | `TLS _ as x ->
@@ -201,60 +178,7 @@ let with_tcp (type t) t (module S: Mirage_types_lwt.STACKV4 with type t = t) sta
 
 (* VCHAN *)
 
-let err_vchan_port = fail "%s: invalid Vchan port"
 
-let port p =
-  match Vchan.Port.of_string p with
-  | `Error s -> err_vchan_port s
-  | `Ok p    -> Lwt.return p
-
-let vchan_client = function
-  | `Vchan_direct (i, p) -> port p >|= fun p -> `Vchan (`Direct (i, p))
-  | `Vchan_domain_socket (i, p) ->
-    port p >|= fun p -> `Vchan (`Domain_socket (i, p))
-
-let vchan_server = function
-  | `Vchan_direct (i, p)  -> port p >|= fun p -> `Vchan (`Direct (i, p))
-  | `Vchan_domain_socket _-> Lwt.return (`Vchan `Domain_socket)
-
-module Vchan (Xs: Xs_client_lwt.S) (V: VCHAN) = struct
-
-  module XS = Conduit_xenstore.Make(Xs)
-
-  type t = XS.t
-  type client = vchan_client [@@deriving sexp]
-  type server = vchan_server [@@deriving sexp]
-
-  let register = XS.register
-
-  let rec connect t (c:vchan_client) = match c with
-    | `Vchan (`Domain_socket (uid, port)) ->
-      XS.connect t ~remote_name:uid ~port >>= fun endp ->
-      connect t (`Vchan endp :> vchan_client)
-    | `Vchan (`Direct (domid, port)) ->
-      V.client ~domid ~port () >>= fun flow ->
-      Lwt.return (Flow.create (module V) flow)
-
-  let listen (t:t) (server:vchan_server) fn = match server with
-    | `Vchan (`Direct (domid, port)) ->
-      V.server ~domid ~port () >>= fun t ->
-      fn (Flow.create (module V) t)
-    | `Vchan `Domain_socket ->
-      XS.listen t >>= fun conns ->
-      Lwt_stream.iter_p (function
-          | `Direct (domid, port) ->
-            V.server ~domid ~port () >>= fun t ->
-            fn (Flow.create (module V) t)
-        ) conns
-
-end
-
-let mk_vchan (module X: XS) (module V: VCHAN) t =
-  let module V = Vchan(X)(V) in
-  V.register t >|= fun t ->
-  S ((module V), t)
-
-let with_vchan t x y z = mk_vchan x y z >|= fun x -> { t with vchan = Some x }
 
 (* TLS *)
 
@@ -307,7 +231,6 @@ module type S = sig
   end
   val with_tcp: t -> 'a stackv4 -> 'a -> t Lwt.t
   val with_tls: t -> t Lwt.t
-  val with_vchan: t -> xs -> vchan -> string -> t Lwt.t
   val connect: t -> client -> Flow.flow Lwt.t
   val listen: t -> server -> callback -> unit Lwt.t
 end
@@ -316,7 +239,7 @@ let rec client (e:Conduit.endp): client Lwt.t = match e with
   | `TCP (x, y) -> tcp_client x y
   | `Unix_domain_socket _ -> err_domain_sockets_not_supported "client"
   | `Vchan_direct _
-  | `Vchan_domain_socket _ as x -> vchan_client x
+  | `Vchan_domain_socket _ -> err_vchan_not_supported "client"
   | `TLS (x, y) -> client y >>= fun c -> tls_client x c
   | `Unknown s -> err_unknown s
 
@@ -324,7 +247,7 @@ let rec server (e:Conduit.endp): server Lwt.t = match e with
   | `TCP (x, y) -> tcp_server x y
   | `Unix_domain_socket _ -> err_domain_sockets_not_supported "server"
   | `Vchan_direct _
-  | `Vchan_domain_socket _ as x -> vchan_server x
+  | `Vchan_domain_socket _ -> err_vchan_not_supported "server"
   | `TLS (x, y) -> server y >>= fun s -> tls_server x s
   | `Unknown s -> err_unknown s
 
